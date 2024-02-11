@@ -49,7 +49,6 @@ __status__ = "Production"
 
 from datetime import datetime
 import pandas as pd
-import numpy as np
 import csv
 
 # Possible exception to be thrown
@@ -76,7 +75,7 @@ def convert_txt_to_csv(input_txt_file: str, output_csv_file: str) -> None:
         FileAccessError: if the input or output file extension are not correct
     """
     # error checking
-    if(input_txt_file.endswith('.txt') or output_csv_file.endswith('.csv')):
+    if not (input_txt_file.endswith('.txt') or output_csv_file.endswith('.csv')):
         raise FileAccessError("The input file must be '.txt' and the output file must be '.csv'")
     
 
@@ -109,7 +108,7 @@ def convert_txt_to_csv(input_txt_file: str, output_csv_file: str) -> None:
 def add_desired_columns(data_row: pd.Series) -> pd.Series:
 
     # Addititon 1 - DEAP Age Band
-    bins = [-np.inf, 1899, 1929, 1949, 1966, 1977, 1982, 1993, 1999, 2004, 2009, np.inf]
+    bins = [float('-inf'), 1899, 1929, 1949, 1966, 1977, 1982, 1993, 1999, 2004, 2009, float('inf')]
     construction_period = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"]
 
     for i in range(len(bins)-1):
@@ -121,11 +120,11 @@ def add_desired_columns(data_row: pd.Series) -> pd.Series:
     data_row['ThermalEra'] = 'Pre' if(data_row['Year_of_Construction'] <= 1977) else 'Post'
 
     # Addition 3 - Glazing percentage
-    data_row['GlazingPercent'] = data_row['WindowArea'] / data_row['WallArea']
+    data_row['GlazingPercent'] = (data_row['WindowArea'] / data_row['WallArea']) if (data_row['WallArea'] > 0) else 0
 
-    # Addition 4 - Total Dwelling Volumn
-    data_row['Volume'] = data_row['GroundFloorArea(sq m)'] * (data_row['GroundFloorHeight'] + data_row['FirstFloorHeight'] + data_row['SecondFloorHeight'] + data_row['ThirdFloorHeight'])
-
+    # Addition 4 - Total Dwelling volume
+    data_row['Volume'] = data_row['GroundFloorArea(sq m)'] * (data_row['GroundFloorHeight'] +data_row['FirstFloorHeight'] +data_row['SecondFloorHeight'] + data_row['ThirdFloorHeight'])
+    
     return data_row
 
 
@@ -134,18 +133,22 @@ def add_desired_columns(data_row: pd.Series) -> pd.Series:
 def drop_unwanted_columns(data_row: pd.Series) -> pd.Series:
     # There are errors within the description columns due to thier subjective nature
     # so it was decided that they be dropped
-    columns_to_drop = ['FirstWallDescription', 'SecondWallDescription', 'ThirdWallDescription']
+    columns_to_drop  = ['FirstWallDescription', 'SecondWallDescription', 'ThirdWallDescription']
     columns_to_drop += [col for col in data_row.index.tolist() if col.startswith('Unnamed:')]
-    kept_rows       = [col for col in data_row.index.tolist() if col not in columns_to_drop]
+    kept_rows        = [col for col in data_row.index.tolist() if col not in columns_to_drop]
 
     return data_row[kept_rows]
 
 
+# This function contains any corrections for internal consistency that needs to be performed
 def correct_column_data(data_row: pd.Series) -> pd.Series:
-    # Correctly assign the number of stories. Starting from 1 storey for a solo ground floor building.
+    # Correctly assign number of stories. Staring from 1 storey for a solo ground floor building.
     if data_row['NoStoreys'] < 4:
-        data_row['NoStoreys'] = 1 + sum([1 for height in ['FirstFloorHeight', 'SecondFloorHeight', 'ThirdFloorHeight'] if data_row[height] > 0])
+        data_row['NoStoreys'] = 1 + sum([1 for height in ['FirstFloorHeight','SecondFloorHeight','ThirdFloorHeight'] if data_row[height] > 0])
+    
     return data_row
+        
+
 
 # This functions contains the criteria for row exclusion
 def filter_by_criteria(data_row: pd.Series) -> bool:
@@ -153,7 +156,7 @@ def filter_by_criteria(data_row: pd.Series) -> bool:
 
     # -------- Independent Exclusion Clauses -------------
     # Clause 1 - Year of Construction
-    if not (data_row['Year_of_Construction'] <= datetime.now().year): 
+    if (data_row['Year_of_Construction'] > datetime.now().year): 
         exclude_row = True
 
     # Double check - The code below seems redundant
@@ -383,9 +386,8 @@ def find_and_replace(data_row: pd.Series) -> pd.Series:
 
 # Lay out the step by stem methodology of cleaning/filtering data entries
 def cleaning_methodology(data_row:pd.Series) -> pd.Series:
-
-    data_row = add_desired_columns(data_row)
     data_row = drop_unwanted_columns(data_row)
+    data_row = add_desired_columns(data_row)
     data_row = correct_column_data(data_row)
     data_row = find_and_replace(data_row)
     return data_row
@@ -421,12 +423,11 @@ def process_csv_file(input_csv_file:str, output_csv_file:str, chunk_size:int = 1
     # file processing
     first_write = True
     for chunk in pd.read_csv(input_csv_file, chunksize = chunk_size):
+        # clean
+        chunk = chunk.apply(cleaning_methodology, axis = 1)
 
         # filter
         chunk = chunk.filter(items = [id for id in chunk.index if filter_by_criteria(chunk.loc[id])], axis = 0)
-
-        # clean
-        chunk = chunk.apply(cleaning_methodology, axis = 1)
 
         # write
         chunk.to_csv(output_csv_file, 
@@ -438,12 +439,11 @@ def process_csv_file(input_csv_file:str, output_csv_file:str, chunk_size:int = 1
 
 
 def main():
-    input_txt_file = './Data/BERPublicsearch.txt'
-    input_csv_file = './Data/find_n_replaced_and_filtered_20231005.csv'
-    output_csv_file = './Data/complete_20231005.csv'
-    first_write = True   # boolean used to triger the start of the file write
+    input_txt_file = './Data/BERPublicSearch_09022024/BERPublicsearch.txt'
+    input_csv_file = './Data/BERPublicSearch_09022024/BERPublicsearch_Intermediary.csv'
+    output_csv_file = './Data/BERPublicSearch_09022024/BERPublicsearch_cleaned.csv'
 
-    # convert_txt_to_csv(input_txt_file, input_csv_file)
+    convert_txt_to_csv(input_txt_file, input_csv_file)
     process_csv_file(input_csv_file, output_csv_file)
 
 
